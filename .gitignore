@@ -1,0 +1,9 @@
+.idea/
+
+test.sql
+
+*.yaml
+
+/node_modules/
+
+index.zip
