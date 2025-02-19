@@ -31,6 +31,9 @@ router.get('/account/:account/exists', async (req, res) => {
 
 // Verifier si une devise est supportée
 router.get('/currency/:currency/supported', (req, res) => {
+
+    return res.status(501).send();
+
     const currency = req.params.currency;
 
     pool.query('SELECT COUNT(*) AS count FROM currency_rates WHERE currency = ?', [currency]).then(
@@ -51,7 +54,10 @@ router.get('/currency/:currency/supported', (req, res) => {
 
 // Fixer le taux de change
 router.post('/currency/:currency/rate', (req, res) => {
-   const currency = req.params.currency;
+
+    return res.status(501).send();
+
+    const currency = req.params.currency;
 
     if (typeof req.body.rate !== 'number' || req.body.rate <= 0) {
          return res.status(400).send();
@@ -133,13 +139,194 @@ router.post('/transaction/card', (req, res) => {
 
                             if (recipient.toString().startsWith('2')) {
                                 // On ajoute le montant du transfert au compte
-                                pool.query('UPDATE comptes SET solde = solde + ? WHERE id_compte = ?', [amount, recipient]).then(
+                                pool.query('UPDATE comptes SET solde = solde + ? WHERE id_compte = ?', [amount, destAccount]).then(
                                     () => {
                                         // On retire le montant du transfert du compte
-                                        pool.query('UPDATE comptes SET solde = solde - ? WHERE id_compte = ?', [amount, senderId]).then(
+                                        pool.query('UPDATE comptes SET solde = solde - ? WHERE id_compte = ?', [amount, sourceAccount]).then(
                                             () => {
                                                 // On enregistre la transaction
-                                                pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [senderId, recipient, amount, label]).then(
+                                                pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [sourceAccount, destAccount, amount, merchant]).then(
+                                                    () => {
+                                                        console.log('Transfert effectué avec succès')
+                                                        res.status(200).send();
+                                                    }).catch( err => {
+                                                    console.error('Erreur lors de l\'enregistrement de la transaction', err);
+                                                    res.status(500).send();
+                                                });
+                                            }).catch( err => {
+                                            console.error('Erreur lors de la débit du compte', err);
+                                            res.status(500).send();
+                                        });
+
+                                    }
+                                ).catch(
+                                    err => {
+                                        console.error('Erreur lors de la créditation du compte', err);
+                                        res.status(500).send();
+                                    }
+                                );
+                            } else {
+                                // TODO: Transfert vers un compte externe
+                            }
+                        }).catch(
+                        err => {
+                            console.error('Erreur lors de la récupération du destinataire', err);
+                            res.status(500).send();
+                        }
+                    );
+                }).catch(
+                err => {
+                    console.error('Erreur lors de la récupération de l\'expéditeur', err);
+                    res.status(500).send();
+                }
+            );
+        }).catch(
+        err => {
+            console.error('Erreur lors de la conversion de la devise', err);
+            res.status(500).send();
+        }
+    );
+});
+
+// Transaction par carte
+router.post('/transaction/check', (req, res) => {
+    let { sourceAccount, destAccount, currency, amount } = req.body;
+
+    // Validation
+    if (!sourceAccount || !destAccount || !currency || !amount ||
+        typeof sourceAccount !== 'number' || sourceAccount < 100000 || sourceAccount > 999999 ||
+        typeof destAccount !== 'number' || destAccount < 100000 || destAccount > 999999 ||
+        typeof currency !== 'string' || currency.length !== 3 ||
+        typeof amount !== 'number' || amount <= 0 ) {
+        return res.status(400).send();
+    }
+
+    if (sourceAccount < 200000 || sourceAccount > 299999) {
+        return res.status(404).send();
+    }
+
+    pool.query('SELECT rate FROM currency_rates WHERE currency = ?', [currency]).then(
+        result => {
+            if (result.length === 0) {
+                return res.status(406).send();
+            }
+            amount = amount * result[0].rate;
+            pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [sourceAccount]).then(
+                sender => {
+                    if (sender.length === 0) {
+                        return res.status(404).send();
+                    }
+
+                    pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [destAccount]).then(
+                        receiver => {
+                            if (receiver.length === 0) {
+                                return res.status(404).send();
+                            }
+
+                            if (sender[0].solde < amount) {
+                                return res.status(400).send();
+                            }
+
+                            if (recipient.toString().startsWith('2')) {
+                                // On ajoute le montant du transfert au compte
+                                pool.query('UPDATE comptes SET solde = solde + ? WHERE id_compte = ?', [amount, destAccount]).then(
+                                    () => {
+                                        // On retire le montant du transfert du compte
+                                        pool.query('UPDATE comptes SET solde = solde - ? WHERE id_compte = ?', [amount, sourceAccount]).then(
+                                            () => {
+                                                // On enregistre la transaction
+                                                pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [sourceAccount, destAccount, amount, "Remise Chèque(s)"]).then(
+                                                    () => {
+                                                        console.log('Transfert effectué avec succès')
+                                                        res.status(200).send();
+                                                    }).catch( err => {
+                                                    console.error('Erreur lors de l\'enregistrement de la transaction', err);
+                                                    res.status(500).send();
+                                                });
+                                            }).catch( err => {
+                                            console.error('Erreur lors de la débit du compte', err);
+                                            res.status(500).send();
+                                        });
+
+                                    }
+                                ).catch(
+                                    err => {
+                                        console.error('Erreur lors de la créditation du compte', err);
+                                        res.status(500).send();
+                                    }
+                                );
+                            } else {
+                                // TODO: Transfert vers un compte externe
+                            }
+                        }).catch(
+                        err => {
+                            console.error('Erreur lors de la récupération du destinataire', err);
+                            res.status(500).send();
+                        }
+                    );
+                }).catch(
+                err => {
+                    console.error('Erreur lors de la récupération de l\'expéditeur', err);
+                    res.status(500).send();
+                }
+            );
+        }).catch(
+        err => {
+            console.error('Erreur lors de la conversion de la devise', err);
+            res.status(500).send();
+        }
+    );
+});
+
+router.post('/transaction/transfer', (req, res) => {
+    let { sourceAccount, destAccount, currency, amount, label } = req.body;
+
+    // Validation
+    if (!sourceAccount || !destAccount || !currency || !amount || !label ||
+        typeof sourceAccount !== 'number' || sourceAccount < 100000 || sourceAccount > 999999 ||
+        typeof destAccount !== 'number' || destAccount < 100000 || destAccount > 999999 ||
+        typeof currency !== 'string' || currency.length !== 3 ||
+        typeof amount !== 'number' || amount <= 0 ||
+        typeof label !== 'string'
+    ) {
+        return res.status(400).send();
+    }
+
+    if (sourceAccount < 200000 || sourceAccount > 299999) {
+        return res.status(404).send();
+    }
+
+    pool.query('SELECT rate FROM currency_rates WHERE currency = ?', [currency]).then(
+        result => {
+            if (result.length === 0) {
+                return res.status(406).send();
+            }
+            amount = amount * result[0].rate;
+            pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [sourceAccount]).then(
+                sender => {
+                    if (sender.length === 0) {
+                        return res.status(404).send();
+                    }
+
+                    pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [destAccount]).then(
+                        receiver => {
+                            if (receiver.length === 0) {
+                                return res.status(404).send();
+                            }
+
+                            if (sender[0].solde < amount) {
+                                return res.status(400).send();
+                            }
+
+                            if (recipient.toString().startsWith('2')) {
+                                // On ajoute le montant du transfert au compte
+                                pool.query('UPDATE comptes SET solde = solde + ? WHERE id_compte = ?', [amount, destAccount]).then(
+                                    () => {
+                                        // On retire le montant du transfert du compte
+                                        pool.query('UPDATE comptes SET solde = solde - ? WHERE id_compte = ?', [amount, sourceAccount]).then(
+                                            () => {
+                                                // On enregistre la transaction
+                                                pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [sourceAccount, destAccount, amount, "Remise Chèque(s)"]).then(
                                                     () => {
                                                         console.log('Transfert effectué avec succès')
                                                         res.status(200).send();
