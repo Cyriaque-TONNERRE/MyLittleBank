@@ -116,76 +116,69 @@ router.post('/account/:account/transfer', (req, res) => {
     if (senderId < 100000 || senderId > 999999 || recipient < 100000 || recipient > 999999) {
         return res.status(400).send();
     }
-    pool.query('SELECT rate FROM currency_rates WHERE currency = ?', [currency]).then(
-        result => {
-            if (result.length !== 0) {
-                amount = amount * result[0].rate;
+    pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [senderId]).then(
+        sender => {
+            if (sender.length === 0) {
+                return res.status(404).send();
             }
-            pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [senderId]).then(
-                sender => {
-                    if (sender.length === 0) {
+
+            pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [recipient]).then(
+                receiver => {
+                    if (receiver.length === 0) {
                         return res.status(404).send();
                     }
 
-                    pool.query('SELECT solde FROM comptes WHERE id_compte = ?', [recipient]).then(
-                        receiver => {
-                            if (receiver.length === 0) {
-                                return res.status(404).send();
-                            }
+                    if (sender[0].solde < amount) {
+                        return res.status(400).send();
+                    }
 
-                            if (sender[0].solde < amount) {
-                                return res.status(400).send();
-                            }
+                    if (recipient.toString().startsWith('2')) {
+                        // On ajoute le montant du transfert au compte
+                        console.log('Transfert vers un compte interne' + amount);
 
-                            if (recipient.toString().startsWith('2')) {
-                                // On ajoute le montant du transfert au compte
-                                pool.query('UPDATE comptes SET solde = solde + ? WHERE id_compte = ?', [amount, recipient]).then(
+                        pool.query('UPDATE comptes SET solde = ? WHERE id_compte = ?', [receiver[0]+ amount, recipient]).then(
+                            () => {
+                                console.log('Crédit effectué avec succès' + amount);
+                                // On retire le montant du transfert du compte
+                                pool.query('UPDATE comptes SET solde = ? WHERE id_compte = ?', [sender[0] - amount, senderId]).then(
                                     () => {
-                                        // On retire le montant du transfert du compte
-                                        pool.query('UPDATE comptes SET solde = solde - ? WHERE id_compte = ?', [amount, senderId]).then(
+                                        console.log('Débit effectué avec succès' + amount);
+                                        // On enregistre la transaction
+                                        pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [senderId, recipient, amount, label]).then(
                                             () => {
-                                                // On enregistre la transaction
-                                                pool.query('INSERT INTO transactions (source, destination, montant, label) VALUES (?, ?, ?, ?)', [senderId, recipient, amount, label]).then(
-                                                    () => {
-                                                        console.log('Transfert effectué avec succès')
-                                                        res.status(200).send();
-                                                    }).catch( err => {
-                                                    console.error('Erreur lors de l\'enregistrement de la transaction', err);
-                                                    res.status(500).send();
-                                                });
+                                                console.log('Transfert effectué avec succès')
+                                                res.status(200).send();
                                             }).catch( err => {
-                                            console.error('Erreur lors de la débit du compte', err);
+                                            console.error('Erreur lors de l\'enregistrement de la transaction', err);
                                             res.status(500).send();
                                         });
+                                    }).catch( err => {
+                                    console.error('Erreur lors de la débit du compte', err);
+                                    res.status(500).send();
+                                });
 
-                                    }
-                                ).catch(
-                                    err => {
-                                        console.error('Erreur lors de la créditation du compte', err);
-                                        res.status(500).send();
-                                    }
-                                );
-                            } else {
-                                // TODO: Transfert vers un compte externe
                             }
-                        }).catch(
-                        err => {
-                            console.error('Erreur lors de la récupération du destinataire', err);
-                            res.status(500).send();
-                        }
-                    );
+                        ).catch(
+                            err => {
+                                console.error('Erreur lors de la créditation du compte', err);
+                                res.status(500).send();
+                            }
+                        );
+                    } else {
+                        // TODO: Transfert vers un compte externe
+                    }
                 }).catch(
                 err => {
-                    console.error('Erreur lors de la récupération de l\'expéditeur', err);
+                    console.error('Erreur lors de la récupération du destinataire', err);
                     res.status(500).send();
                 }
             );
         }).catch(
-            err => {
-                console.error('Erreur lors de la conversion de la devise', err);
-                res.status(500).send();
-            }
-        );
+        err => {
+            console.error('Erreur lors de la récupération de l\'expéditeur', err);
+            res.status(500).send();
+        }
+    );
 
 });
 
